@@ -67,12 +67,6 @@ class BaseDataset(Dataset):
         """
         Get element from the index, preprocess it, and combine it
         into a dict.
-
-        Args:
-            ind (int): index in the self.index list.
-        Returns:
-            instance_data (dict): dict, containing instance
-                (a single dataset element).
         """
         data_dict = self._index[ind]
         audio_path = data_dict["path"]
@@ -80,7 +74,7 @@ class BaseDataset(Dataset):
         text = data_dict["text"]
         text_encoded = self.text_encoder.encode(text)
 
-        # Create initial instance data with raw audio
+        # Create initial instance data
         instance_data = {
             "audio": audio,
             "text": text,
@@ -88,37 +82,34 @@ class BaseDataset(Dataset):
             "audio_path": audio_path,
         }
 
-        # Apply audio augmentations before computing spectrogram if they exist
         if self.instance_transforms is not None:
-            for transform_name, transform in self.instance_transforms.items():
-                if transform_name == "audio_transforms":
-                    instance_data["audio"] = transform(instance_data["audio"])
+            # 1. Apply audio augmentations first
+            if "audio_transforms" in self.instance_transforms:
+                instance_data["audio"] = self.instance_transforms["audio_transforms"](instance_data["audio"])
 
-        # Compute spectrogram after augmentations
-        instance_data["spectrogram"] = self.get_spectrogram(instance_data["audio"])
+            # 2. Compute spectrogram from (possibly augmented) audio
+            instance_data["spectrogram"] = self.get_spectrogram(instance_data["audio"])
 
-        # Apply other transforms (except audio and spectrogram ones)
+            # 3. Apply spectrogram augmentations if they exist
+            if "spectrogram" in self.instance_transforms:
+                instance_data["spectrogram"] = self.instance_transforms["spectrogram"](instance_data["spectrogram"])
+
+        # 4. Apply remaining transforms through preprocess_data
         instance_data = self.preprocess_data(instance_data)
 
         return instance_data
 
-
     def preprocess_data(self, instance_data):
         """
-        Preprocess data with instance transforms, skipping audio and
-        spectrogram transforms which are handled separately.
-
-        Args:
-            instance_data (dict): dict containing instance data
-        Returns:
-            instance_data (dict): dict with transformed data
+        Preprocess data with instance transforms.
         """
         if self.instance_transforms is not None:
             for transform_name, transform in self.instance_transforms.items():
                 # Skip special transforms that are handled separately
-                if transform_name in ["get_spectrogram", "audio_transforms"]:
+                if transform_name in ["get_spectrogram", "audio_transforms", "spectrogram"]:
                     continue
 
+                # Применяем трансформацию если ключ существует в данных
                 if transform_name in instance_data:
                     instance_data[transform_name] = transform(instance_data[transform_name])
 
@@ -150,28 +141,28 @@ class BaseDataset(Dataset):
         """
         return self.instance_transforms["get_spectrogram"](audio)
 
-    def preprocess_data(self, instance_data):
-        """
-        Preprocess data with instance transforms.
-
-        Each tensor in a dict undergoes its own transform defined by the key.
-
-        Args:
-            instance_data (dict): dict, containing instance
-                (a single dataset element).
-        Returns:
-            instance_data (dict): dict, containing instance
-                (a single dataset element) (possibly transformed via
-                instance transform).
-        """
-        if self.instance_transforms is not None:
-            for transform_name in self.instance_transforms.keys():
-                if transform_name == "get_spectrogram":
-                    continue  # skip special key
-                instance_data[transform_name] = self.instance_transforms[
-                    transform_name
-                ](instance_data[transform_name])
-        return instance_data
+    # def preprocess_data(self, instance_data):
+    #     """
+    #     Preprocess data with instance transforms.
+    #
+    #     Each tensor in a dict undergoes its own transform defined by the key.
+    #
+    #     Args:
+    #         instance_data (dict): dict, containing instance
+    #             (a single dataset element).
+    #     Returns:
+    #         instance_data (dict): dict, containing instance
+    #             (a single dataset element) (possibly transformed via
+    #             instance transform).
+    #     """
+    #     if self.instance_transforms is not None:
+    #         for transform_name in self.instance_transforms.keys():
+    #             if transform_name == "get_spectrogram":
+    #                 continue  # skip special key
+    #             instance_data[transform_name] = self.instance_transforms[
+    #                 transform_name
+    #             ](instance_data[transform_name])
+    #     return instance_data
 
     @staticmethod
     def _filter_records_from_dataset(
