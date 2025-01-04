@@ -1,83 +1,142 @@
 from torch import nn
+import torch.nn.functional as F
+
+
+class CNNLayerNorm(nn.Module):
+    def __init__(self, n_feats):
+        super().__init__()
+        self.layer_norm = nn.LayerNorm(n_feats)
+
+    def forward(self, x):
+        x = x.transpose(2, 3).contiguous()
+        x = self.layer_norm(x)
+        return x.transpose(2, 3).contiguous()
+
+
+class ResidualCNN(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel, stride, dropout, n_feats):
+        super().__init__()
+        self.cnn1 = nn.Conv2d(in_channels, out_channels, kernel, stride, padding=kernel // 2)
+        self.cnn2 = nn.Conv2d(out_channels, out_channels, kernel, stride, padding=kernel // 2)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.layer_norm1 = CNNLayerNorm(n_feats)
+        self.layer_norm2 = CNNLayerNorm(n_feats)
+
+    def forward(self, x):
+        residual = x
+        x = self.layer_norm1(x)
+        x = F.gelu(x)
+        x = self.dropout1(x)
+        x = self.cnn1(x)
+        x = self.layer_norm2(x)
+        x = F.gelu(x)
+        x = self.dropout2(x)
+        x = self.cnn2(x)
+        x += residual
+        return x
+
+
+class BidirectionalGRU(nn.Module):
+    def __init__(self, rnn_dim, hidden_size, dropout, batch_first):
+        super().__init__()
+        self.BiGRU = nn.GRU(
+            input_size=rnn_dim,
+            hidden_size=hidden_size,
+            num_layers=1,
+            batch_first=batch_first,
+            bidirectional=True
+        )
+        self.layer_norm = nn.LayerNorm(rnn_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        x = self.layer_norm(x)
+        x = F.gelu(x)
+        x, _ = self.BiGRU(x)
+        x = self.dropout(x)
+        return x
 
 
 class DeepSpeech2(nn.Module):
-    """
-    DeepSpeech2 model for ASR tasks.
-    """
-
     def __init__(self, n_feats, n_tokens, rnn_hidden=512, num_rnn_layers=5):
         """
-        Args:
-            n_feats (int): Number of input features (e.g., spectrogram frequencies).
-            n_tokens (int): Number of tokens in the vocabulary.
-            rnn_hidden (int): Number of hidden units in each RNN layer.
-            num_rnn_layers (int): Number of RNN layers.
-        """
+    Args:
+        n_feats (int): Number of input features (e.g., spectrogram frequencies).
+        n_tokens (int): Number of tokens in the vocabulary.
+        rnn_hidden (int): Number of hidden units in each RNN layer.
+        num_rnn_layers (int): Number of RNN layers.
+    """
         super().__init__()
 
-        # Convolutional feature extractor
-        self.cnn = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # Downsampling
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),  # Downsampling
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
+        # Constants
+        dropout = 0.1
+        n_feats = n_feats // 2
+        n_cnn_layers = 3
+
+        # Initial CNN layer
+        self.cnn = nn.Conv2d(1, 32, 3, stride=2, padding=3 // 2)
+
+        # Residual CNN layers
+        self.rescnn_layers = nn.Sequential(*[
+            ResidualCNN(32, 32, kernel=3, stride=1, dropout=dropout, n_feats=n_feats)
+            for _ in range(n_cnn_layers)
+        ])
+
+        # Fully connected layer
+        self.fully_connected = nn.Linear(n_feats * 32, rnn_hidden)
+
+        # Bidirectional GRU layers
+        self.birnn_layers = nn.Sequential(*[
+            BidirectionalGRU(
+                rnn_dim=rnn_hidden if i == 0 else rnn_hidden * 2,
+                hidden_size=rnn_hidden,
+                dropout=dropout,
+                batch_first=i == 0
+            )
+            for i in range(num_rnn_layers)
+        ])
+
+        # Classifier
+        self.fc = nn.Sequential(
+            nn.Linear(rnn_hidden * 2, rnn_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(rnn_hidden, n_tokens)
         )
-
-        # Calculate the new feature size after CNN
-        cnn_out_size = n_feats // 4  # Adjust for stride in the conv layers
-
-        # Recurrent layers
-        self.rnn = nn.GRU(
-            input_size=cnn_out_size * 128,  # Combine frequency and channel dimensions
-            hidden_size=rnn_hidden,
-            num_layers=num_rnn_layers,
-            batch_first=True,
-            bidirectional=True
-        )
-
-        # Output projection
-        self.fc = nn.Linear(rnn_hidden * 2, n_tokens)  # *2 for bidirectional
 
     def forward(self, spectrogram, spectrogram_length, **batch):
         """
-        Forward pass through the model.
+      Forward pass through the model.
 
-        Args:
-            spectrogram (Tensor): Input spectrogram (batch_size, freq, time).
-            spectrogram_length (Tensor): Original lengths of the spectrogram.
-        Returns:
-            dict: Contains log probabilities and transformed lengths.
-        """
-        # Add channel dimension (batch_size, 1, freq, time)
-        spectrogram = spectrogram.unsqueeze(1)
+      Args:
+          spectrogram (Tensor): Input spectrogram (batch_size, freq, time).
+          spectrogram_length (Tensor): Original lengths of the spectrogram.
+      Returns:
+          dict: Contains log probabilities and transformed lengths.
+      """
+        # Add channel dimension
 
-        # Apply CNN
-        cnn_output = self.cnn(spectrogram)
+        x = spectrogram.unsqueeze(1)
 
-        # Reshape for RNN (batch_size, time, features)
-        batch_size, channels, freq, time = cnn_output.shape
-        cnn_output = cnn_output.permute(0, 3, 1, 2).reshape(batch_size, time, -1)
+        # Apply CNN and residual layers
+        x = self.cnn(x)
+        x = self.rescnn_layers(x)
 
-        # Apply RNN
-        rnn_output, _ = self.rnn(cnn_output)
+        # Reshape for RNN
+        sizes = x.size()
+        x = x.view(sizes[0], sizes[1] * sizes[2], sizes[3])
+        x = x.transpose(1, 2)
 
-        # Apply final projection
-        output = self.fc(rnn_output)
+        # Apply fully connected and RNN layers
+        x = self.fully_connected(x)
+        x = self.birnn_layers(x)
+
+        # Final classification
+        output = self.fc(x)
 
         # Compute log probabilities
-        log_probs = nn.functional.log_softmax(output, dim=-1)
+        log_probs = F.log_softmax(output, dim=-1)
 
         # Transform input lengths
         log_probs_length = self.transform_input_lengths(spectrogram_length)
@@ -86,18 +145,19 @@ class DeepSpeech2(nn.Module):
 
     def transform_input_lengths(self, input_lengths):
         """
-        Transform input lengths for compressed time dimension.
-        Args:
-            input_lengths (Tensor): Original input lengths.
-        Returns:
-            Tensor: Transformed lengths.
-        """
-        return (input_lengths + 3) // 4  # Adjust for stride in CNN layers
+    Transform input lengths for compressed time dimension.
+    Args:
+        input_lengths (Tensor): Original input lengths.
+    Returns:
+        Tensor: Transformed lengths.
+    """
+        return (input_lengths + 3) // 4
 
     def __str__(self):
         """
-        Model prints with the number of parameters.
-        """
+          Model prints with the number of parameters.
+          """
+
         all_parameters = sum([p.numel() for p in self.parameters()])
         trainable_parameters = sum(
             [p.numel() for p in self.parameters() if p.requires_grad]
