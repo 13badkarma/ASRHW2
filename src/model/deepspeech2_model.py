@@ -1,5 +1,6 @@
 from torch import nn
 
+
 class DeepSpeech2(nn.Module):
     """
     DeepSpeech2 model for ASR tasks.
@@ -17,20 +18,29 @@ class DeepSpeech2(nn.Module):
 
         # Convolutional feature extractor
         self.cnn = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),  # Conv layer
-            nn.BatchNorm2d(32),  # Batch normalization
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1),  # Downsampling
+            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # Downsampling
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),  # Downsampling
+            nn.BatchNorm2d(128),
             nn.ReLU(),
         )
 
         # Calculate the new feature size after CNN
-        cnn_out_size = n_feats // 2  # Adjust for stride in the second conv layer
+        cnn_out_size = n_feats // 4  # Adjust for stride in the conv layers
 
         # Recurrent layers
-        self.rnn = nn.LSTM(
-            input_size=cnn_out_size * 32,  # Combine frequency and channel dimensions
+        self.rnn = nn.GRU(
+            input_size=cnn_out_size * 128,  # Combine frequency and channel dimensions
             hidden_size=rnn_hidden,
             num_layers=num_rnn_layers,
             batch_first=True,
@@ -82,7 +92,7 @@ class DeepSpeech2(nn.Module):
         Returns:
             Tensor: Transformed lengths.
         """
-        return (input_lengths + 1) // 2  # Adjust for stride in CNN layer
+        return (input_lengths + 3) // 4  # Adjust for stride in CNN layers
 
     def __str__(self):
         """
