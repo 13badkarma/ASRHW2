@@ -1,64 +1,55 @@
+from torch import nn
 import torch
 
-
 def collate_fn(dataset_items: list[dict]):
-    """
-    Collate and pad fields in the dataset items.
-
-    Args:
-        dataset_items: List of dicts from dataset.__getitem__
-    Returns:
-        result_batch: Dict with batched and padded tensors
-    """
-    # Get batch size
-    batch_size = len(dataset_items)
-
-    # Find max lengths for padding
-    max_audio_len = max(item["audio"].shape[1] for item in dataset_items)
-    max_spectrogram_len = max(item["spectrogram"].shape[2] for item in dataset_items)
-    max_text_encoded_len = max(item["text_encoded"].shape[1] for item in dataset_items)
-
-    # Initialize tensors for the batch
-    audio_batch = torch.zeros(batch_size, 1, max_audio_len)
-    spectrogram_batch = torch.zeros(
-        batch_size,
-        dataset_items[0]["spectrogram"].shape[1],  # frequency dimension
-        max_spectrogram_len
-    )
-    text_encoded_batch = torch.zeros(batch_size, max_text_encoded_len, dtype=torch.long)
-
-    # Keep track of actual lengths
+    spectrograms = []
+    audio_signals = []
+    text_encoded_list = []
+    
+    # Списки для метаданных
     audio_lengths = []
     spectrogram_lengths = []
     text_encoded_lengths = []
     texts = []
     audio_paths = []
 
-    # Fill in the batches
-    for i, item in enumerate(dataset_items):
-        # Audio
-        audio = item["audio"]
-        audio_len = audio.shape[1]
-        audio_batch[i, :, :audio_len] = audio
-        audio_lengths.append(audio_len)
+    for item in dataset_items:
+        # Аудио
+        audio = item["audio"]  # [1, time]
+        audio_signals.append(audio.squeeze(0))  # [time]
+        audio_lengths.append(audio.shape[1])
 
-        # Spectrogram
-        spectrogram = item["spectrogram"]
-        spec_len = spectrogram.shape[2]
-        spectrogram_batch[i, :, :spec_len] = spectrogram
-        spectrogram_lengths.append(spec_len)
+        # Спектрограмма - меняем порядок обработки
+        spec = item["spectrogram"]  # [1, freq=128, time]
+        spec = spec.squeeze(0)  # [freq=128, time]
+        # Не делаем permute здесь, чтобы сохранить правильный порядок данных
+        spectrograms.append(spec)
+        spectrogram_lengths.append(spec.shape[1])  # длина по времени
 
-        # Text
+        # Текст
         text_encoded = item["text_encoded"]
-        text_len = text_encoded.shape[1]
-        text_encoded_batch[i, :text_len] = text_encoded
-        text_encoded_lengths.append(text_len)
+        text_encoded_list.append(text_encoded.squeeze(0))
+        text_encoded_lengths.append(text_encoded.shape[1])
 
-        # Original text and paths
         texts.append(item["text"])
         audio_paths.append(item["audio_path"])
 
-    # Convert lengths to tensors
+    # Паддинг последовательностей
+    audio_batch = nn.utils.rnn.pad_sequence(audio_signals, batch_first=True)  # [batch, time]
+    audio_batch = audio_batch.unsqueeze(1)  # [batch, channel=1, time]
+
+    # Для спектрограмм создаем батч напрямую
+    max_spec_len = max(spec.shape[1] for spec in spectrograms)
+    spec_batch = torch.zeros(len(spectrograms), 1, 128, max_spec_len, 
+                           device=spectrograms[0].device)
+    
+    for i, spec in enumerate(spectrograms):
+        spec_len = spec.shape[1]
+        spec_batch[i, 0, :, :spec_len] = spec  # Паддинг добавляется в конец
+
+    text_encoded_batch = nn.utils.rnn.pad_sequence(text_encoded_list, batch_first=True)
+
+    # Конвертируем длины в тензоры
     audio_lengths = torch.tensor(audio_lengths)
     spectrogram_lengths = torch.tensor(spectrogram_lengths)
     text_encoded_lengths = torch.tensor(text_encoded_lengths)
@@ -66,7 +57,7 @@ def collate_fn(dataset_items: list[dict]):
     return {
         "audio": audio_batch,
         "audio_length": audio_lengths,
-        "spectrogram": spectrogram_batch,
+        "spectrogram": spec_batch,  # [batch, channel=1, freq=128, time]
         "spectrogram_length": spectrogram_lengths,
         "text_encoded": text_encoded_batch,
         "text_encoded_length": text_encoded_lengths,

@@ -453,6 +453,7 @@ class BaseTrainer:
             return
         for metric_name in metric_tracker.keys():
             self.writer.add_scalar(f"{metric_name}", metric_tracker.avg(metric_name))
+            # print(f"{metric_name}", metric_tracker.avg(metric_name)) # used for debug
 
     def _save_checkpoint(self, epoch, save_best=False, only_best=False):
         """

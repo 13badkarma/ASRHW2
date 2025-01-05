@@ -1,4 +1,5 @@
 from torch import nn
+import torch
 import torch.nn.functional as F
 
 
@@ -117,10 +118,10 @@ class DeepSpeech2(nn.Module):
       """
         # Add channel dimension
 
-        x = spectrogram.unsqueeze(1)
-
-        # Apply CNN and residual layers
+        x = spectrogram
         x = self.cnn(x)
+        if torch.isnan(x).any():
+            print("NaN detected after CNN!")
         x = self.rescnn_layers(x)
 
         # Reshape for RNN
@@ -137,7 +138,7 @@ class DeepSpeech2(nn.Module):
 
         # Compute log probabilities
         log_probs = F.log_softmax(output, dim=-1)
-
+ 
         # Transform input lengths
         log_probs_length = self.transform_input_lengths(spectrogram_length)
 
