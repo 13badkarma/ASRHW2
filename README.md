@@ -12,6 +12,9 @@
 
 This repository based on template for solving ASR task with PyTorch. [HSE DLA course](https://github.com/markovka17/dla) ASR homework. [Short WanDb report](https://wandb.ai/namep/pytorch_template_asr_example/reports/ASR-HW2-Deepspeech2-model--VmlldzoxMDgzNTIxOA?accessToken=5d61y82ehvh8jlbrvnvbkvl8oyuu0kzwt26kqteemq603fjt0akwj5qraxvl8qch)
 
+Final clean 100 run for 4 hours 25 epochs. 
+[WanDB results](https://wandb.ai/namep/pytorch_template_asr_example?nw=nwusertrueperestoronin)
+
 
 
 ## Installation
