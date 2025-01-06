@@ -71,12 +71,14 @@ class DeepSpeech2(nn.Module):
         super().__init__()
 
         # Constants
-        dropout = 0.1
+        dropout = 0.2
+        if n_feats % 2 != 0:
+            raise ValueError(f"n_feats must be even, got {n_feats}")
         n_feats = n_feats // 2
         n_cnn_layers = 3
 
         # Initial CNN layer
-        self.cnn = nn.Conv2d(1, 32, 3, stride=2, padding=3 // 2)
+        self.cnn = nn.Conv2d(1, 32, 3, stride=2, padding=1)
 
         # Residual CNN layers
         self.rescnn_layers = nn.Sequential(*[
@@ -152,7 +154,9 @@ class DeepSpeech2(nn.Module):
     Returns:
         Tensor: Transformed lengths.
     """
-        return (input_lengths + 3) // 4
+    # CNN layer reduces length by factor of 2
+        lengths = (input_lengths + 1) // 2  
+        return lengths
 
     def __str__(self):
         """
