@@ -155,9 +155,7 @@ class DeepSpeech2(nn.Module):
         Tensor: Transformed lengths.
     """
     # CNN layer reduces length by factor of 2
-        lengths = (input_lengths + 1) // 2  
-        return lengths
-
+        return ((input_lengths + 2*1 - 3) // 2) + 1    
     def __str__(self):
         """
           Model prints with the number of parameters.
