@@ -5,6 +5,8 @@ defaults:
   - dataloader: example
   - transforms: example
   - _self_
+text_encoder:
+  _target_: src.text_encoder.CTCTextEncoder
 inferencer:
   device_tensors: ["data_object", "labels"] # which tensors should be on device (ex. GPU)
   device: auto # device name or "auto"
