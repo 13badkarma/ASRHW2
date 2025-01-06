@@ -1,5 +1,5 @@
 defaults:
-  - model: deepspeech
+  - model: deepspeech2
   - metrics: example
   - datasets: inference # we do not want to run inference on training data
   - dataloader: example
