@@ -124,14 +124,21 @@ class Inferencer(BaseTrainer):
                 metrics.update(met.name, met(**batch))
 
         # Process and save predictions
-        batch_size = batch["logits"].shape[0]  # [B, T, num_classes]
+        batch_size = batch["log_probs"].shape[0]  # [B, T, num_classes]
         current_id = batch_idx * batch_size
 
         for i in range(batch_size):
-            # Get logits and decode them to text
-            logits = batch["logits"][i].detach().cpu()  # [T, num_classes]
-            predicted_indices = torch.argmax(logits, dim=-1)  # [T]
-            predicted_text = self.text_encoder.decode(predicted_indices)
+            # Get log_probs and lengths for decoding
+            log_probs = batch["log_probs"][i].detach().cpu()  # [T, num_classes]
+            log_probs_length = batch["log_probs_length"][i].item() if "log_probs_length" in batch else log_probs.shape[0]
+            
+            # Decode using CTCTextEncoder with configured decoding method
+            predicted_text = self.text_encoder.ctc_decode(
+                log_probs[:log_probs_length],
+                beam_size=self.config.get("beam_size", None),  # If beam_size is set in config
+                lm_weight=self.config.get("lm_weight", 0.0),  # If using language model
+                beam_prune_logp=self.config.get("beam_prune_logp", -10.0)  # Beam pruning threshold
+            )
 
             # Get ground truth if available
             ground_truth = None
@@ -144,7 +151,7 @@ class Inferencer(BaseTrainer):
             output = {
                 "predicted_text": predicted_text,
                 "ground_truth": ground_truth,
-                "logits": logits,
+                "log_probs": log_probs,
             }
 
             # Add spectrograms/features if needed
