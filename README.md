@@ -10,9 +10,9 @@
 
 ## About
 
-This repository contains a template for solving ASR task with PyTorch. This template branch is a part of the [HSE DLA course](https://github.com/markovka17/dla) ASR homework. Some parts of the code are missing (or do not follow the most optimal design choices...) and students are required to fill these parts themselves (as well as writing their own models, etc.).
+This repository based on template for solving ASR task with PyTorch. [HSE DLA course](https://github.com/markovka17/dla) ASR homework. [Short WanDb report](https://wandb.ai/namep/pytorch_template_asr_example/reports/ASR-HW2-Deepspeech2-model--VmlldzoxMDgzNTIxOA?accessToken=5d61y82ehvh8jlbrvnvbkvl8oyuu0kzwt26kqteemq603fjt0akwj5qraxvl8qch)
 
-See the task assignment [here](https://github.com/markovka17/dla/tree/2024/hw1_asr).
+
 
 ## Installation
 
@@ -59,7 +59,7 @@ Follow these steps to install the project:
 To train a model, run the following command:
 
 ```bash
-python3 train.py -cn=CONFIG_NAME HYDRA_CONFIG_ARGUMENTS
+python3 train.py # by default it will use baseline.yaml  or you can define your own with --cn parameter
 ```
 
 Where `CONFIG_NAME` is a config from `src/configs` and `HYDRA_CONFIG_ARGUMENTS` are optional arguments.
@@ -67,7 +67,7 @@ Where `CONFIG_NAME` is a config from `src/configs` and `HYDRA_CONFIG_ARGUMENTS` 
 To run inference (evaluate the model or save predictions):
 
 ```bash
-python3 inference.py HYDRA_CONFIG_ARGUMENTS
+python3 inference.py 
 ```
 
 ## Credits
