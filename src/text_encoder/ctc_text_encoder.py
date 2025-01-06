@@ -1,6 +1,6 @@
 import re
 from string import ascii_lowercase
-from typing import List, Optional
+from typing import List, Optional, Union
 from collections import defaultdict
 
 import torch
@@ -10,12 +10,6 @@ class CTCTextEncoder:
     EMPTY_TOK = ""
 
     def __init__(self, alphabet=None, language_model=None, **kwargs):
-        """
-        Args:
-            alphabet (list): alphabet for language. If None, it will be
-                set to ascii
-            language_model: Optional language model for beam search scoring
-        """
         if alphabet is None:
             alphabet = list(ascii_lowercase + " ")
 
@@ -44,44 +38,51 @@ class CTCTextEncoder:
             )
 
     def decode(self, inds) -> str:
-        """
-        Raw decoding without CTC.
-        Used to validate the CTC decoding implementation.
-
-        Args:
-            inds (list): list of tokens.
-        Returns:
-            raw_text (str): raw text with empty tokens and repetitions.
-        """
         return "".join([self.ind2char[int(ind)] for ind in inds]).strip()
 
-    def ctc_decode(self, inds: List[int], beam_size: Optional[int] = None) -> str:
+    def ctc_decode(self, 
+                   logits: Union[torch.Tensor, np.ndarray, List[int]], 
+                   beam_size: Optional[int] = None,
+                   lm_weight: float = 0.0,
+                   beam_prune_logp: float = -10.0) -> str:
         """
         CTC decoding with optional beam search and language model scoring.
-
+        
         Args:
-            inds (List[int]): List of token indices from model output
-            beam_size (Optional[int]): If provided, use beam search with given width
+            logits: Either log probabilities [T, V] or token indices [T]
+            beam_size: If provided, use beam search with given width
+            lm_weight: Weight for language model scoring (if LM available)
+            beam_prune_logp: Prune beams with log probability below this
         Returns:
-            text (str): Decoded text with CTC collapsing rules applied
+            text: Decoded text after applying CTC rules
         """
-        if beam_size is not None:
-            return self._ctc_beam_search(inds, beam_size)
+        # Handle different input types
+        if isinstance(logits, (list, np.ndarray)):
+            if beam_size is None or len(logits.shape) == 1:
+                return self._ctc_greedy_decode(logits)
+            logits = torch.tensor(logits)
+            
+        if beam_size is None:
+            return self._ctc_greedy_decode(torch.argmax(logits, dim=-1))
+            
+        return self._ctc_beam_search(logits, beam_size, lm_weight, beam_prune_logp)
 
-        # Basic greedy CTC decoding
+    def _ctc_greedy_decode(self, indices: Union[torch.Tensor, np.ndarray, List[int]]) -> str:
+        """Basic greedy CTC decoding"""
+        # Convert to list of ints if needed
+        if isinstance(indices, torch.Tensor):
+            indices = indices.cpu().numpy()
+        if isinstance(indices, np.ndarray):
+            indices = indices.tolist()
+
         processed = []
         prev_token = None
 
-        for ind in inds:
+        for ind in indices:
             token = self.ind2char[int(ind)]
 
-            # Rule 1: Skip empty tokens
-            if token == self.EMPTY_TOK:
+            if token == self.EMPTY_TOK or token == prev_token:
                 prev_token = token
-                continue
-
-            # Rule 2: Skip repeated tokens
-            if token == prev_token:
                 continue
 
             processed.append(token)
@@ -89,53 +90,86 @@ class CTCTextEncoder:
 
         return "".join(processed).strip()
 
-    def _ctc_beam_search(self, inds: List[int], beam_size: int) -> str:
+    def _ctc_beam_search(self, 
+                        logits: torch.Tensor,
+                        beam_size: int,
+                        lm_weight: float = 0.0,
+                        beam_prune_logp: float = -10.0) -> str:
         """
-        CTC beam search decoding with optional language model scoring.
-
+        CTC beam search decoding using log probabilities.
+        
         Args:
-            inds (List[int]): Token indices from model output
-            beam_size (int): Beam width
+            logits: Log probabilities from model [T, V]
+            beam_size: Beam width
+            lm_weight: Weight for language model scoring
+            beam_prune_logp: Prune beams with log prob below this threshold
         Returns:
-            text (str): Best decoded text according to beam search
+            text: Best decoded text according to beam search
         """
+        # Ensure input is proper log probabilities
+        if not isinstance(logits, torch.Tensor):
+            logits = torch.tensor(logits)
+        if len(logits.shape) == 1:
+            # Convert indices to one-hot log probs
+            indices = logits
+            logits = torch.zeros((len(indices), len(self.vocab)))
+            logits[range(len(indices)), indices] = 0
+            logits[range(len(indices)), :] = float('-inf')
+            
         # Initialize beam with empty sequence
-        beam = [([], 0.0)]  # (sequence, log_probability)
-
-        for t, ind in enumerate(inds):
-            candidates = defaultdict(float)
-
-            for seq, score in beam:
-                token = self.ind2char[int(ind)]
-
-                # Skip empty token case
-                if token == self.EMPTY_TOK:
-                    candidates[tuple(seq)] = max(candidates[tuple(seq)], score)
-                    continue
-
-                # Skip repeated token case
-                if seq and token == seq[-1]:
-                    candidates[tuple(seq)] = max(candidates[tuple(seq)], score)
-                    continue
-
-                # Add new token to sequence
-                new_seq = list(seq) + [token]
-                new_score = score
-
-                # Add language model score if available
-                if self.language_model is not None:
-                    new_score += self.language_model.score("".join(new_seq))
-
-                candidates[tuple(new_seq)] = max(candidates[tuple(new_seq)], new_score)
-
-            # Select top-k candidates
-            beam = []
-            for seq, score in sorted(candidates.items(), key=lambda x: x[1], reverse=True)[:beam_size]:
-                beam.append((list(seq), score))
-
-        # Return best sequence
-        best_seq = max(beam, key=lambda x: x[1])[0]
-        return "".join(best_seq).strip()
+        beam = {('', self.EMPTY_TOK): 0.0}  # (prefix, last_char): log_prob
+        
+        T = logits.shape[0]  # sequence length
+        
+        for t in range(T):
+            new_beam = defaultdict(lambda: float('-inf'))
+            
+            for (prefix, last_char), prefix_logp in beam.items():
+                # For each vocabulary item
+                for v in range(len(self.vocab)):
+                    char = self.ind2char[v]
+                    log_p = logits[t, v].item()
+                    
+                    # Skip if probability is too low
+                    if log_p < beam_prune_logp:
+                        continue
+                        
+                    # Apply CTC rules
+                    if char == self.EMPTY_TOK:
+                        new_prefix, new_last = prefix, last_char
+                    elif char == last_char:
+                        new_prefix, new_last = prefix, last_char
+                    else:
+                        new_prefix = prefix + char
+                        new_last = char
+                        
+                    # Add language model score if available
+                    lm_score = 0.0
+                    if self.language_model is not None and new_prefix != prefix:
+                        lm_score = lm_weight * self.language_model.score(new_prefix)
+                    
+                    # Update beam with log-sum-exp
+                    new_logp = prefix_logp + log_p + lm_score
+                    current = new_beam[(new_prefix, new_last)]
+                    new_beam[(new_prefix, new_last)] = torch.logaddexp(
+                        torch.tensor(current),
+                        torch.tensor(new_logp)
+                    ).item()
+            
+            # Prune beam
+            beam_items = sorted(new_beam.items(), key=lambda x: x[1], reverse=True)
+            beam = dict(beam_items[:beam_size])
+            
+            # If all beams are very improbable, restart with empty beam
+            if all(p < beam_prune_logp for p in beam.values()):
+                beam = {('', self.EMPTY_TOK): 0.0}
+        
+        # Handle empty result
+        if not beam:
+            return ""
+            
+        # Return highest probability sequence
+        return max(beam.items(), key=lambda x: x[1])[0][0]
 
     @staticmethod
     def normalize_text(text: str):
