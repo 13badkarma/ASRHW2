@@ -64,6 +64,7 @@ python3 train.py # by default it will use baseline.yaml  or you can define your 
 
 Where `CONFIG_NAME` is a config from `src/configs` and `HYDRA_CONFIG_ARGUMENTS` are optional arguments.
 
+Before inference inside repo folder execute script `download_model.sh`
 To run inference (evaluate the model or save predictions):
 
 ```bash
