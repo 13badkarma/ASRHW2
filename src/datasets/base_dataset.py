@@ -90,9 +90,9 @@ class BaseDataset(Dataset):
             # 2. Compute spectrogram from (possibly augmented) audio
             instance_data["spectrogram"] = self.get_spectrogram(instance_data["audio"])
 
-            # 3. Apply spectrogram augmentations if they exist
-            if "spectrogram" in self.instance_transforms:
-                instance_data["spectrogram"] = self.instance_transforms["spectrogram"](instance_data["spectrogram"])
+            # # 3. Apply spectrogram augmentations if they exist
+            # if "spectrogram" in self.instance_transforms:
+            #     instance_data["spectrogram"] = self.instance_transforms["spectrogram"](instance_data["spectrogram"])
 
         # 4. Apply remaining transforms through preprocess_data
         instance_data = self.preprocess_data(instance_data)
@@ -141,28 +141,7 @@ class BaseDataset(Dataset):
         """
         return self.instance_transforms["get_spectrogram"](audio)
 
-    # def preprocess_data(self, instance_data):
-    #     """
-    #     Preprocess data with instance transforms.
-    #
-    #     Each tensor in a dict undergoes its own transform defined by the key.
-    #
-    #     Args:
-    #         instance_data (dict): dict, containing instance
-    #             (a single dataset element).
-    #     Returns:
-    #         instance_data (dict): dict, containing instance
-    #             (a single dataset element) (possibly transformed via
-    #             instance transform).
-    #     """
-    #     if self.instance_transforms is not None:
-    #         for transform_name in self.instance_transforms.keys():
-    #             if transform_name == "get_spectrogram":
-    #                 continue  # skip special key
-    #             instance_data[transform_name] = self.instance_transforms[
-    #                 transform_name
-    #             ](instance_data[transform_name])
-    #     return instance_data
+
 
     @staticmethod
     def _filter_records_from_dataset(
