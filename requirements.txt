@@ -1,19 +1,34 @@
+# ML frameworks
 torch==2.2.0
 torchvision==0.17.0
 torchaudio==2.2.0
+
+# Audio processing
 soundfile
-numpy==1.26.4
 torch_audiomentations
+
+# Utils
+numpy==1.26.4
 tqdm
 matplotlib
 pandas
+
+# Experiment tracking
 wandb
 comet_ml
+
+# Config
 hydra-core
 
+# Text processing
+https://github.com/kpu/kenlm/archive/master.zip
+pyctcdecode
+Levenshtein
+
+# Dev tools
 black
 isort
 pre-commit
 
+# Other
 wget
-Levenshtein

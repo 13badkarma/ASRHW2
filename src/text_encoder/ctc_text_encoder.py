@@ -1,24 +1,52 @@
 import re
 from string import ascii_lowercase
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple, Dict, Any
 from collections import defaultdict
 
 import torch
 import numpy as np
+import kenlm
+from pyctcdecode.decoder import build_ctcdecoder
+from pyctcdecode.constants import DEFAULT_BEAM_WIDTH, DEFAULT_PRUNE_LOGP, DEFAULT_MIN_TOKEN_LOGP
+
+class LMTextNormalizer:
+    """Класс для нормализации текста между CTC и языковой моделью"""
+    @staticmethod
+    def to_lm_format(text: str) -> str:
+        """Преобразует текст в формат для языковой модели"""
+        return text.upper()
+    
+    @staticmethod
+    def from_lm_format(text: str) -> str:
+        """Преобразует текст из формата языковой модели"""
+        return text.lower()
 
 class CTCTextEncoder:
     EMPTY_TOK = ""
 
-    def __init__(self, alphabet=None, language_model=None, **kwargs):
+    def __init__(self, alphabet=None, kenlm_path=None, **kwargs):
         if alphabet is None:
             alphabet = list(ascii_lowercase + " ")
 
         self.alphabet = alphabet
         self.vocab = [self.EMPTY_TOK] + list(self.alphabet)
-        self.language_model = language_model
-
+        self.text_normalizer = LMTextNormalizer()
+        
         self.ind2char = dict(enumerate(self.vocab))
         self.char2ind = {v: k for k, v in self.ind2char.items()}
+        
+        # Initialize KenLM and pyctcdecode components
+        self.kenlm_model = None
+        self.decoder = None
+        if kenlm_path:
+            # Создаем словарь с учетом регистра для языковой модели
+            lm_vocab = [self.text_normalizer.to_lm_format(c) for c in self.vocab]
+            
+            # Используем build_ctcdecoder с словарем в верхнем регистре
+            self.decoder = build_ctcdecoder(
+                labels=lm_vocab,  # Словарь в верхнем регистре для LM
+                kenlm_model_path=kenlm_path
+            )
 
     def __len__(self):
         return len(self.vocab)
@@ -96,7 +124,7 @@ class CTCTextEncoder:
                         lm_weight: float = 0.0,
                         beam_prune_logp: float = -10.0) -> str:
         """
-        CTC beam search decoding using log probabilities.
+        CTC beam search decoding using pyctcdecode's implementation.
         
         Args:
             logits: Log probabilities from model [T, V]
@@ -106,70 +134,32 @@ class CTCTextEncoder:
         Returns:
             text: Best decoded text according to beam search
         """
-        # Ensure input is proper log probabilities
-        if not isinstance(logits, torch.Tensor):
-            logits = torch.tensor(logits)
+        if self.decoder is None:
+            raise ValueError("Decoder not initialized. Please provide kenlm_path during initialization.")
+            
+        # Convert logits to proper format for pyctcdecode
+        if isinstance(logits, torch.Tensor):
+            logits = logits.cpu().numpy()
+        
+        # If logits are indices, convert to one-hot log probs
         if len(logits.shape) == 1:
-            # Convert indices to one-hot log probs
             indices = logits
-            logits = torch.zeros((len(indices), len(self.vocab)))
-            logits[range(len(indices)), indices] = 0
-            logits[range(len(indices)), :] = float('-inf')
-            
-        # Initialize beam with empty sequence
-        beam = {('', self.EMPTY_TOK): 0.0}  # (prefix, last_char): log_prob
+            new_logits = np.full((len(indices), len(self.vocab)), float('-inf'))
+            new_logits[range(len(indices)), indices] = 0
+            logits = new_logits
         
-        T = logits.shape[0]  # sequence length
+        # Perform beam search decoding
+        beams = self.decoder.decode_beams(
+            logits,
+            beam_width=beam_size,
+            beam_prune_logp=beam_prune_logp,
+            token_min_logp=beam_prune_logp
+        )
         
-        for t in range(T):
-            new_beam = defaultdict(lambda: float('-inf'))
-            
-            for (prefix, last_char), prefix_logp in beam.items():
-                # For each vocabulary item
-                for v in range(len(self.vocab)):
-                    char = self.ind2char[v]
-                    log_p = logits[t, v].item()
-                    
-                    # Skip if probability is too low
-                    if log_p < beam_prune_logp:
-                        continue
-                        
-                    # Apply CTC rules
-                    if char == self.EMPTY_TOK:
-                        new_prefix, new_last = prefix, last_char
-                    elif char == last_char:
-                        new_prefix, new_last = prefix, last_char
-                    else:
-                        new_prefix = prefix + char
-                        new_last = char
-                        
-                    # Add language model score if available
-                    lm_score = 0.0
-                    if self.language_model is not None and new_prefix != prefix:
-                        lm_score = lm_weight * self.language_model.score(new_prefix)
-                    
-                    # Update beam with log-sum-exp
-                    new_logp = prefix_logp + log_p + lm_score
-                    current = new_beam[(new_prefix, new_last)]
-                    new_beam[(new_prefix, new_last)] = torch.logaddexp(
-                        torch.tensor(current),
-                        torch.tensor(new_logp)
-                    ).item()
-            
-            # Prune beam
-            beam_items = sorted(new_beam.items(), key=lambda x: x[1], reverse=True)
-            beam = dict(beam_items[:beam_size])
-            
-            # If all beams are very improbable, restart with empty beam
-            if all(p < beam_prune_logp for p in beam.values()):
-                beam = {('', self.EMPTY_TOK): 0.0}
-        
-        # Handle empty result
-        if not beam:
-            return ""
-            
-        # Return highest probability sequence
-        return max(beam.items(), key=lambda x: x[1])[0][0]
+        # Get the best beam and convert it back to lowercase
+        if beams:
+            return self.text_normalizer.from_lm_format(beams[0][0])
+        return ""
 
     @staticmethod
     def normalize_text(text: str):

@@ -1,15 +1,23 @@
 defaults:
   - model: deepspeech2
   - metrics: example
+  - writer: wandb
   - datasets: inference # we do not want to run inference on training data
   - dataloader: example
   - transforms: example
   - _self_
 text_encoder:
   _target_: src.text_encoder.CTCTextEncoder
+  kenlm_path: lm/3-gram.pruned.3e-7.arpa
+  vocab_path: lm/librispeech-vocab.txt 
+  beam_size: 15
+  lm_weight: 0.5
+  beam_prune_logp: -10
 inferencer:
   device_tensors: ["spectrogram", "text_encoded"] # which tensors should be on device (ex. GPU)
   device: auto # device name or "auto"
   save_path: "example" # any name here, can be a dataset name
+  save_dir: 'saved'
   seed: 1
-  from_pretrained: "saved/testing/checkpoint-epoch25.pth" # path to the pretrained model
+  override: True
+  from_pretrained: "checkpoint-epoch25.pth" # path to the pretrained model

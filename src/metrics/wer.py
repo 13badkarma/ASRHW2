@@ -30,9 +30,9 @@ class DecodingMethod(Enum):
 @dataclass
 class DecodingConfig:
     method: DecodingMethod = DecodingMethod.GREEDY
-    beam_size: int = 5
-    lm_weight: float = 0.1
-    beam_prune_logp: float = -10.0
+    beam_size: int = 20
+    lm_weight: float = 0.5
+    beam_prune_logp: float = -15.0
 
 
 class WERMetric(BaseMetric):
@@ -137,9 +137,9 @@ class BeamSearchLMWERMetric(WERMetric):
     def __init__(
             self,
             *args,
-            beam_size: int = 5,
-            lm_weight: float = 0.1,
-            beam_prune_logp: float = -10.0,
+            beam_size: int = 20,
+            lm_weight: float = 0.3,
+            beam_prune_logp: float = -8.0,
             **kwargs
     ):
         super().__init__(
