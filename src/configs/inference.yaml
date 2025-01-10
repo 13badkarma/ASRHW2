@@ -20,4 +20,4 @@ inferencer:
   save_dir: 'saved'
   seed: 1
   override: True
-  from_pretrained: "checkpoint-epoch25.pth" # path to the pretrained model
+  from_pretrained: "saved/testing/checkpoint-epoch25.pth" # path to the pretrained model

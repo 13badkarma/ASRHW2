@@ -45,7 +45,8 @@ def collate_fn(dataset_items: list[dict]):
     
     for i, spec in enumerate(spectrograms):
         spec_len = spec.shape[1]
-        spec_batch[i, 0, :, :spec_len] = spec  # Паддинг добавляется в конец
+        # Явно указываем, что паддинг должен быть только по временной оси
+        spec_batch[i, 0, :128, :spec_len] = spec[:128, :spec_len]
 
     text_encoded_batch = nn.utils.rnn.pad_sequence(text_encoded_list, batch_first=True)
 
